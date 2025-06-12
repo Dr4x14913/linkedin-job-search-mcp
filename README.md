@@ -1,4 +1,4 @@
-# Job-Description-Search-Tool
+# Linkedind Job Search Mcp
 
 ## Quick Overview
 
@@ -9,8 +9,8 @@ This server acts as a **MCP tool** that searches for job descriptions on LinkedI
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/yourrepo.git
-cd yourrepo
+git clone https://github.com/Dr4x14913/linkedin-job-search-mcp.git
+cd linkedin-job-search-mcp
 ```
 #### Run the Server
 Run the server using the following command:
@@ -23,7 +23,7 @@ Replace `/path/to/yourrepo` with the actual path to your cloned repository.
 ```json
 {
   "mcpServers": {
-    "job-description-search-tool": {
+    "linkedin-job-search-mcp": {
       "command": "uv",
       "args": [
         "--directory",
