@@ -1,10 +1,68 @@
 from fastmcp import FastMCP, Context
 import chromadb
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.utils.embedding_functions import OllamaEmbeddingFunction
 import os
 from typing import List, Dict, Any, Annotated
 from pydantic import Field
 from linkedin_wrapper import search_jobs as linkedin_search_jobs
+import onnxruntime
+from transformers import AutoTokenizer
+import numpy as np
+
+class ONNXEmbeddingFunction(EmbeddingFunction):
+    def __init__(self, model_path: str, tokenizer_name: str = "onnx-community/Qwen3-Embedding-0.6B-ONNX"):
+        # Initialize ONNX runtime session
+        self.session = onnxruntime.InferenceSession(model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        self.tokenizer.padding_side = 'left'
+        
+    def last_token_pool(self, last_hidden_states: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
+        float_attention_mask = attention_mask.astype(np.float32)
+        batch_size, seq_len, hidden_size = last_hidden_states.shape
+        
+        # Check if all sequences end at the same position
+        if np.all(float_attention_mask[:, -1] == 1):
+            return last_hidden_states[:, -1, :]
+        else:
+            sequence_lengths = np.sum(float_attention_mask, axis=1) - 1
+            pooled_embeddings = []
+            for i in range(batch_size):
+                seq_len_i = int(sequence_lengths[i])
+                pooled_embeddings.append(last_hidden_states[i, seq_len_i, :])
+            return np.stack(pooled_embeddings)
+    
+    def __call__(self, input: Documents) -> Embeddings:
+        if isinstance(input, str):
+            input = [input]
+            
+        # Tokenize with all required fields
+        encoded_input = self.tokenizer(
+            input,
+            padding=True,
+            truncation=True,
+            return_tensors="np",
+            max_length=512
+        )
+        
+        # Prepare ONNX inputs
+        ort_inputs = {
+            "input_ids": encoded_input["input_ids"],
+            "attention_mask": encoded_input["attention_mask"],
+            "position_ids": np.arange(encoded_input["input_ids"].shape[1]).reshape(1, -1)
+        }
+        
+        # Run inference
+        ort_outputs = self.session.run(None, ort_inputs)
+        last_hidden_state = ort_outputs[0]  # Assuming first output is last_hidden_state
+        
+        # Pool embeddings
+        pooled = self.last_token_pool(last_hidden_state, encoded_input["attention_mask"])
+        
+        # Normalize embeddings
+        pooled = pooled / np.linalg.norm(pooled, axis=1, keepdims=True)
+        
+        return pooled.tolist()
 
 env_vars = {
     "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL"),
@@ -24,8 +82,8 @@ def check_env():
 @mcp.tool
 async def search_jobs(
     ctx: Context,
-    resume: Annotated[str, Field(description="The resume text to match against.")],
-    queries: Annotated[List[str], Field(description="List of search queries for the input resume.")],
+    resume: Annotated[str, Field(description="The resume text to match against.")] = "I'm a sofware engineer, c++, rust",
+    queries: Annotated[List[str], Field(description="List of search queries for the input resume.")] = ["software", "devops"],
     n_results: Annotated[int, Field(description="Number of similar job descriptions to return.", default=5)] = 5,
 ):
     """
@@ -41,10 +99,11 @@ async def search_jobs(
         List of job descriptions similar to the resume.
     """
     # Initialize ChromaDB client and collection
-    ollama_ef = OllamaEmbeddingFunction(
-        url=env_vars['OLLAMA_URL'],
-        model_name=env_vars['OLLAMA_MODEL'],
-    )
+    #ollama_ef = OllamaEmbeddingFunction(
+    #    url=env_vars['OLLAMA_URL'],
+    #    model_name=env_vars['OLLAMA_MODEL'],
+    #)
+    ollama_ef = ONNXEmbeddingFunction(model_path="model.onnx")
     chroma_client = chromadb.EphemeralClient()
     collection_name = "job_embeddings"
     collection = chroma_client.create_collection(name=collection_name, embedding_function=ollama_ef)
@@ -56,7 +115,7 @@ async def search_jobs(
             keywords=query,
             limit=env_vars['LINKEDIN_BATCH_SIZE'],  
         )
-        
+        await ctx.info(jobs[0])
         collection.add(
             documents=[job["description"] for job in jobs],
             metadatas=[{
