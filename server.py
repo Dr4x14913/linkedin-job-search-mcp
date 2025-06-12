@@ -10,7 +10,7 @@ env_vars = {
     "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL"),
     "LINKEDIN_EMAIL": os.getenv("LINKEDIN_EMAIL"),
     "LINKEDIN_PASSWORD": os.getenv("LINKEDIN_PASSWORD"),
-    "LINKEDIN_BATCH_SIZE": os.getenv("LINKEDIN_BATCH_SIZE", 10), # Increase limit for better results
+    "LINKEDIN_BATCH_SIZE": int(os.getenv("LINKEDIN_BATCH_SIZE", 10)), # Increase limit for better results
     "OLLAMA_URL": os.getenv("OLLAMA_URL", "http://localhost:11434"),
 }
 
@@ -30,6 +30,7 @@ async def search_jobs(
 ):
     """
     Search jobs in Linkedin using the porvided queries and retrive the relevant ones with respect to the resume.
+    Note that the total queries number is the length of the quesries list time 10, the sweet spot is providing 3 to 5 queries.
 
     Args:
         resume: Text of the resume to match against.
@@ -72,7 +73,7 @@ async def search_jobs(
     await ctx.info(f"Querying best results ...")
     results = collection.query(
         query_texts=[resume],
-        n_results=n_results
+        n_results=int(n_results)
     )
 
     # delete collection
