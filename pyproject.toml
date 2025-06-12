@@ -1,0 +1,12 @@
+[project]
+name = "mcp-jobs"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.0.12",
+    "fastmcp>=2.8.0",
+    "linkedin-api>=2.3.1",
+    "ollama>=0.5.1",
+]
