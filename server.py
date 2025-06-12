@@ -42,7 +42,7 @@ class ONNXEmbeddingFunction(EmbeddingFunction):
             padding=True,
             truncation=True,
             return_tensors="np",
-            max_length=512
+            max_length=1024
         )
         
         # Prepare ONNX inputs
@@ -54,6 +54,7 @@ class ONNXEmbeddingFunction(EmbeddingFunction):
         
         # Run inference
         ort_outputs = self.session.run(None, ort_inputs)
+        print(self.session.get_outputs())
         last_hidden_state = ort_outputs[0]  # Assuming first output is last_hidden_state
         
         # Pool embeddings
