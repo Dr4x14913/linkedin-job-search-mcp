@@ -40,18 +40,16 @@ async def search_jobs(
     Returns:
         List of job descriptions similar to the resume.
     """
-    # Initialize Ollama embedding function
+    # Initialize ChromaDB client and collection
     ollama_ef = OllamaEmbeddingFunction(
         url=env_vars['OLLAMA_URL'],
         model_name=env_vars['OLLAMA_MODEL'],
     )
-
-    # Initialize ChromaDB client and collection
-    chroma_client = chromadb.Client()
+    chroma_client = chromadb.EphemeralClient()
     collection_name = "job_embeddings"
-    collection = chroma_client.get_or_create_collection(name=collection_name, embedding_function=ollama_ef)
+    collection = chroma_client.create_collection(name=collection_name, embedding_function=ollama_ef)
 
-    # Process each query to add job descriptions
+    # Process each query
     for i, query in enumerate(queries):
         await ctx.info(f"Processing query {query} ({i+1}/{len(queries)})")
         jobs = linkedin_search_jobs(
@@ -76,11 +74,7 @@ async def search_jobs(
         n_results=int(n_results)
     )
 
-    # delete collection
     chroma_client.delete_collection(name=collection_name)
-
-    await ctx.info(f"{results}")
-    # Return the matched job descriptions
     return [
         {
             "title": m['title'],
@@ -89,7 +83,7 @@ async def search_jobs(
             "description": d
         }
         for m, d in zip(results["metadatas"][0], results['documents'][0])
-    ]
+    ] if len(results['metadatas']) > 0 else ["No matching results found"]
 
 if __name__ == "__main__":
     check_env()
