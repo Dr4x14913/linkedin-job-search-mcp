@@ -54,8 +54,11 @@ class ONNXEmbeddingFunction(EmbeddingFunction):
         
         # Run inference
         ort_outputs = self.session.run(None, ort_inputs)
-        print(self.session.get_outputs())
-        last_hidden_state = ort_outputs[0]  # Assuming first output is last_hidden_state
+        output_names = [output.name for output in self.session.get_outputs()]
+        if "last_hidden_state" in output_names:
+            last_hidden_state = ort_outputs[output_names.index("last_hidden_state")]
+        else: 
+            raise Exception(f"Last hidden state not found")
         
         # Pool embeddings
         pooled = self.last_token_pool(last_hidden_state, encoded_input["attention_mask"])
