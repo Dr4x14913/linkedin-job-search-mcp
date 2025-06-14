@@ -6,32 +6,20 @@ import os
 from typing import List, Dict, Any, Annotated
 from pydantic import Field
 from linkedin_wrapper import search_jobs as linkedin_search_jobs
-import onnxruntime
+import onnxruntime as ort
 from transformers import AutoTokenizer
 import numpy as np
+from huggingface_hub import hf_hub_download, snapshot_download
 
-class ONNXEmbeddingFunction(EmbeddingFunction):
-    def __init__(self, model_path: str, tokenizer_name: str = "onnx-community/Qwen3-Embedding-0.6B-ONNX"):
+class Qwen3_0p6B_ONNXEmbeddingFunction(EmbeddingFunction):
+    def __init__(self):
         # Initialize ONNX runtime session
-        self.session = onnxruntime.InferenceSession(model_path)
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        hf_repo = "electroglyph/Qwen3-Embedding-0.6B-onnx-uint8"
+        model_path = hf_hub_download(hf_repo, "dynamic_uint8.onnx")
+        self.session = ort.InferenceSession(model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(hf_repo)
         self.tokenizer.padding_side = 'left'
         
-    def last_token_pool(self, last_hidden_states: np.ndarray, attention_mask: np.ndarray) -> np.ndarray:
-        float_attention_mask = attention_mask.astype(np.float32)
-        batch_size, seq_len, hidden_size = last_hidden_states.shape
-        
-        # Check if all sequences end at the same position
-        if np.all(float_attention_mask[:, -1] == 1):
-            return last_hidden_states[:, -1, :]
-        else:
-            sequence_lengths = np.sum(float_attention_mask, axis=1) - 1
-            pooled_embeddings = []
-            for i in range(batch_size):
-                seq_len_i = int(sequence_lengths[i])
-                pooled_embeddings.append(last_hidden_states[i, seq_len_i, :])
-            return np.stack(pooled_embeddings)
-    
     def __call__(self, input: Documents) -> Embeddings:
         if isinstance(input, str):
             input = [input]
@@ -51,29 +39,25 @@ class ONNXEmbeddingFunction(EmbeddingFunction):
             "attention_mask": encoded_input["attention_mask"],
             "position_ids": np.arange(encoded_input["input_ids"].shape[1]).reshape(1, -1)
         }
-        
+        inputs = {}
+        for inp in self.session.get_inputs():
+            if inp.name in ort_inputs:
+                inputs[inp.name] = ort_inputs[inp.name].astype(np.int64)
+
         # Run inference
-        ort_outputs = self.session.run(None, ort_inputs)
-        output_names = [output.name for output in self.session.get_outputs()]
-        if "last_hidden_state" in output_names:
-            last_hidden_state = ort_outputs[output_names.index("last_hidden_state")]
-        else: 
-            raise Exception(f"Last hidden state not found")
-        
-        # Pool embeddings
-        pooled = self.last_token_pool(last_hidden_state, encoded_input["attention_mask"])
+        ort_outputs = self.session.run(None, inputs)
+        pooled = ort_outputs[0]
         
         # Normalize embeddings
         pooled = pooled / np.linalg.norm(pooled, axis=1, keepdims=True)
+        print(pooled) 
         
         return pooled.tolist()
 
 env_vars = {
-    "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL"),
     "LINKEDIN_EMAIL": os.getenv("LINKEDIN_EMAIL"),
     "LINKEDIN_PASSWORD": os.getenv("LINKEDIN_PASSWORD"),
     "LINKEDIN_BATCH_SIZE": int(os.getenv("LINKEDIN_BATCH_SIZE", 10)), # Increase limit for better results
-    "OLLAMA_URL": os.getenv("OLLAMA_URL", "http://localhost:11434"),
 }
 
 mcp = FastMCP("Job Description Search Tool")
@@ -103,14 +87,10 @@ async def search_jobs(
         List of job descriptions similar to the resume.
     """
     # Initialize ChromaDB client and collection
-    #ollama_ef = OllamaEmbeddingFunction(
-    #    url=env_vars['OLLAMA_URL'],
-    #    model_name=env_vars['OLLAMA_MODEL'],
-    #)
-    ollama_ef = ONNXEmbeddingFunction(model_path="model.onnx")
+    ef = Qwen3_0p6B_ONNXEmbeddingFunction()
     chroma_client = chromadb.EphemeralClient()
     collection_name = "job_embeddings"
-    collection = chroma_client.create_collection(name=collection_name, embedding_function=ollama_ef)
+    collection = chroma_client.create_collection(name=collection_name, embedding_function=ef,  metadata={"hnsw:space": "cosine"})
 
     # Process each query
     for i, query in enumerate(queries):
